@@ -42,7 +42,7 @@ The sheet columns are `Fetched At UTC`, `Value`, `Cell Price %`, `Unit`, and `Pr
 5. Open the **Actions** tab and choose **Nickel price update**.
 6. Select **Run workflow** to append a test set of rows immediately.
 
-The workflow is scheduled for 08:00 UTC every day. To change the schedule, edit
+The workflow is scheduled for 02:30 UTC every day. To change the schedule, edit
 `.github/workflows/nickel-price-email.yml`.
 
 ## Optional email delivery
