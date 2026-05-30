@@ -426,16 +426,14 @@ def iter_products(node: object) -> Iterable[dict[str, object]]:
 
 def pick_price_value(price: dict[str, object]) -> str | None:
     average = stringify(price.get("average"))
-    low = stringify(price.get("low"))
-    high = stringify(price.get("high"))
-    if average and low and high:
-        return f"{average} ({low}-{high})"
     if average:
         return average
     for key in ("mid_rate", "rate", "last", "close", "price", "sell", "buy"):
         value = stringify(price.get(key))
         if value:
             return value
+    low = stringify(price.get("low"))
+    high = stringify(price.get("high"))
     if low and high:
         return f"{low}-{high}"
     return None

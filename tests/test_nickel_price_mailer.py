@@ -97,7 +97,7 @@ class NickelPriceMailerTests(unittest.TestCase):
         self.assertEqual(len(snapshot.rows), 1)
         row = snapshot.rows[0]
         self.assertEqual(row.label, "SMM Shanghai 1# Nickel Cathode (SMM-NI-RN-001)")
-        self.assertEqual(row.value, "18745.31 (18608.58-18882.04)")
+        self.assertEqual(row.value, "18745.31")
         self.assertEqual(row.unit, "USD/tonne")
         self.assertEqual(row.change, "153.09 (0.82%)")
         self.assertEqual(row.date, "2026-05-29")

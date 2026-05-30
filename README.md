@@ -9,7 +9,7 @@ The service:
 - fetches metal.com's public nickel price JSON endpoint, with nickel pages as
   fallback sources;
 - filters to `SMM Shanghai 1# Nickel Cathode (SMM-NI-RN-001)`;
-- appends only fetched time, value, unit, and price date to Google Sheets;
+- appends fetched time, average value, unit, price date, and calculated `Cell Price %` to Google Sheets;
 - optionally sends the update through any SMTP provider;
 - can run once for GitHub Actions/cron or continuously on an interval;
 - uses only the Python standard library.
@@ -49,6 +49,9 @@ Configure at least one destination: Google Sheets or email.
 > secrets, your shell profile, cron environment, or deployment platform secrets.
 
 ## Google Sheets setup
+
+The sheet columns are `Fetched At UTC`, `Value`, `Unit`, `Price Date`, and `Cell Price %`. The percentage column uses `=((value * 0.013 * 10^-3) / 1.45) * 100`.
+
 
 1. Create/open the Google Sheet where you want nickel prices stored.
 2. Open **Extensions** -> **Apps Script**.

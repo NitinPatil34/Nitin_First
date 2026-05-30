@@ -6,6 +6,9 @@ deployment writes nickel prices to Google Sheets and does not require email.
 
 ## Google Sheets deployment
 
+The sheet columns are `Fetched At UTC`, `Value`, `Unit`, `Price Date`, and `Cell Price %`. The percentage column uses `=((value * 0.013 * 10^-3) / 1.45) * 100`.
+
+
 1. Create/open the Google Sheet where nickel prices should be stored.
 2. Open **Extensions** -> **Apps Script**.
 3. Paste the contents of `google_sheets_app_script.gs`.

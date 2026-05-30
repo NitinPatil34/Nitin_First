@@ -4,6 +4,7 @@ const HEADERS = [
   'Value',
   'Unit',
   'Price Date',
+  'Cell Price %',
 ];
 
 function doPost(e) {
@@ -23,13 +24,18 @@ function doPost(e) {
   const sheet = getTargetSheet(spreadsheet);
   ensureHeaderRow(sheet);
 
-  const values = rows.map((row) => [
-    row.fetched_at_utc || '',
-    row.value || '',
-    row.unit || '',
-    row.price_date || '',
-  ]);
-  sheet.getRange(sheet.getLastRow() + 1, 1, values.length, HEADERS.length).setValues(values);
+  const startRow = sheet.getLastRow() + 1;
+  const values = rows.map((row, index) => {
+    const sheetRow = startRow + index;
+    return [
+      row.fetched_at_utc || '',
+      parsePriceValue(row.value),
+      row.unit || '',
+      row.price_date || '',
+      `=((B${sheetRow}*0.013*10^-3)/1.45)*100`,
+    ];
+  });
+  sheet.getRange(startRow, 1, values.length, HEADERS.length).setValues(values);
 
   return jsonResponse({
     ok: true,
@@ -37,6 +43,12 @@ function doPost(e) {
     spreadsheetId: spreadsheet.getId(),
     sheetName: sheet.getName(),
   });
+}
+
+function parsePriceValue(value) {
+  const normalized = String(value || '').replace(/,/g, '').trim();
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : value || '';
 }
 
 function getTargetSpreadsheet() {
@@ -75,7 +87,7 @@ function ensureHeaderRow(sheet) {
   const currentHeaders = sheet.getRange(1, 1, 1, HEADERS.length).getValues()[0];
   const hasHeaders = HEADERS.every((header, index) => currentHeaders[index] === header);
   if (!hasHeaders) {
-    // Switching from the old multi-product sheet layout to the focused tracker.
+    // Switching from an older layout to the focused tracker with calculated percentage.
     sheet.clearContents();
     sheet.appendRow(HEADERS);
   }
