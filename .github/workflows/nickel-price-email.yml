@@ -1,6 +1,9 @@
 name: Nickel price email update
 
 on:
+  push:
+    branches:
+      - cursor/nickel-price-email-updates-5340
   schedule:
     # Runs every day at 08:00 UTC.
     - cron: "0 8 * * *"
