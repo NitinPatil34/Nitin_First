@@ -6,7 +6,7 @@ deployment writes nickel prices to Google Sheets and does not require email.
 
 ## Google Sheets deployment
 
-The sheet columns are `Fetched At UTC`, `Value`, `Unit`, `Price Date`, and `Cell Price %`. The percentage column uses `=((value * 0.013 * 10^-3) / 1.45) * 100`.
+The sheet columns are `Fetched At UTC`, `Value`, `Cell Price %`, `Unit`, and `Price Date`. The percentage column uses `=((value * 0.013 * 10^-3) / 1.45) * 100`.
 
 
 1. Create/open the Google Sheet where nickel prices should be stored.
@@ -42,7 +42,7 @@ The sheet columns are `Fetched At UTC`, `Value`, `Unit`, `Price Date`, and `Cell
 5. Open the **Actions** tab and choose **Nickel price update**.
 6. Select **Run workflow** to append a test set of rows immediately.
 
-The workflow is scheduled for 08:00 UTC every day. To change the schedule, edit
+The workflow is scheduled every 5 minutes and runs five 1-minute update iterations each time. To change the schedule, edit
 `.github/workflows/nickel-price-email.yml`.
 
 ## Optional email delivery

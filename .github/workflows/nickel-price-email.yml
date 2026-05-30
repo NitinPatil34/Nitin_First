@@ -2,14 +2,15 @@ name: Nickel price update
 
 on:
   schedule:
-    # Runs every day at 08:00 UTC.
-    - cron: "0 8 * * *"
+    # GitHub schedules are most reliable at 5-minute granularity.
+    # The job loops five times so rows are appended about once per minute.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
   send-nickel-price-email:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     env:
       NICKEL_DISABLE_EMAIL: ${{ vars.NICKEL_DISABLE_EMAIL || 'true' }}
       NICKEL_SMTP_HOST: ${{ secrets.NICKEL_SMTP_HOST }}
@@ -37,5 +38,12 @@ jobs:
       - name: Validate updater configuration
         run: python3 nickel_price_mailer.py --print-config
 
-      - name: Update nickel price destinations
-        run: python3 nickel_price_mailer.py --once
+      - name: Update nickel price destinations every minute
+        run: |
+          for minute in 1 2 3 4 5; do
+            echo "Running nickel price update iteration ${minute}/5"
+            python3 nickel_price_mailer.py --once
+            if [ "$minute" != "5" ]; then
+              sleep 60
+            fi
+          done

@@ -50,7 +50,7 @@ Configure at least one destination: Google Sheets or email.
 
 ## Google Sheets setup
 
-The sheet columns are `Fetched At UTC`, `Value`, `Unit`, `Price Date`, and `Cell Price %`. The percentage column uses `=((value * 0.013 * 10^-3) / 1.45) * 100`.
+The sheet columns are `Fetched At UTC`, `Value`, `Cell Price %`, `Unit`, and `Price Date`. The percentage column uses `=((value * 0.013 * 10^-3) / 1.45) * 100`.
 
 
 1. Create/open the Google Sheet where you want nickel prices stored.
@@ -91,7 +91,7 @@ python3 nickel_price_mailer.py
 ## Deployment
 
 A GitHub Actions workflow is included at `.github/workflows/nickel-price-email.yml`.
-It is configured for daily Google Sheets updates by default. After this branch is
+It is configured for Google Sheets updates about once per minute by default. After this branch is
 merged into `main`, add the Google Sheets webhook secrets in GitHub repository
 settings, then run the workflow manually once from the Actions tab to confirm
 the focused row is appended. See `DEPLOYMENT.md` for the full checklist.

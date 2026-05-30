@@ -2,9 +2,9 @@ const SHEET_NAME = 'Nickel Prices';
 const HEADERS = [
   'Fetched At UTC',
   'Value',
+  'Cell Price %',
   'Unit',
   'Price Date',
-  'Cell Price %',
 ];
 
 function doPost(e) {
@@ -30,9 +30,9 @@ function doPost(e) {
     return [
       row.fetched_at_utc || '',
       parsePriceValue(row.value),
+      `=((B${sheetRow}*0.013*10^-3)/1.45)*100`,
       row.unit || '',
       row.price_date || '',
-      `=((B${sheetRow}*0.013*10^-3)/1.45)*100`,
     ];
   });
   sheet.getRange(startRow, 1, values.length, HEADERS.length).setValues(values);
