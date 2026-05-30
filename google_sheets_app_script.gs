@@ -1,11 +1,8 @@
 const SHEET_NAME = 'Nickel Prices';
 const HEADERS = [
   'Fetched At UTC',
-  'Source URL',
-  'Label',
   'Value',
   'Unit',
-  'Change',
   'Price Date',
 ];
 
@@ -28,11 +25,8 @@ function doPost(e) {
 
   const values = rows.map((row) => [
     row.fetched_at_utc || '',
-    row.source_url || '',
-    row.label || '',
     row.value || '',
     row.unit || '',
-    row.change || '',
     row.price_date || '',
   ]);
   sheet.getRange(sheet.getLastRow() + 1, 1, values.length, HEADERS.length).setValues(values);
@@ -81,8 +75,9 @@ function ensureHeaderRow(sheet) {
   const currentHeaders = sheet.getRange(1, 1, 1, HEADERS.length).getValues()[0];
   const hasHeaders = HEADERS.every((header, index) => currentHeaders[index] === header);
   if (!hasHeaders) {
-    sheet.insertRowBefore(1);
-    sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+    // Switching from the old multi-product sheet layout to the focused tracker.
+    sheet.clearContents();
+    sheet.appendRow(HEADERS);
   }
 }
 

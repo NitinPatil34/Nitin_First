@@ -132,15 +132,30 @@ class NickelPriceMailerTests(unittest.TestCase):
             [
                 {
                     "fetched_at_utc": "2026-05-30 12:00:00 UTC",
-                    "source_url": "https://www.metal.com/nickel",
-                    "label": "SMM Shanghai #1 Nickel Cathode",
                     "value": "122,325",
                     "unit": "CNY/mt",
-                    "change": "+800",
                     "price_date": "May 30, 2026",
                 }
             ],
         )
+
+    def test_filter_snapshots_by_target_keeps_only_target_row(self):
+        snapshot = mailer.PriceSnapshot(
+            source_url="https://www.metal.com/nickel",
+            fetched_at_utc=dt.datetime(2026, 5, 30, 12, 0, tzinfo=dt.timezone.utc),
+            title="Nickel",
+            rows=(
+                mailer.PriceRow("SMM Shanghai 1# Nickel Cathode (SMM-NI-RN-001)", "18745.31", "USD/tonne", None, "2026-05-29"),
+                mailer.PriceRow("Shanghai Jinchuan #1 Refined Nickel (SMM-NI-RN-006)", "18829.95", "USD/tonne", None, "2026-05-29"),
+            ),
+            raw_excerpt="",
+        )
+
+        filtered = mailer.filter_snapshots_by_target((snapshot,), "SMM Shanghai 1# Nickel Cathode (SMM-NI-RN-001)")
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(len(filtered[0].rows), 1)
+        self.assertEqual(filtered[0].rows[0].label, "SMM Shanghai 1# Nickel Cathode (SMM-NI-RN-001)")
 
     def test_build_email_body_includes_source_and_rows(self):
         snapshot = mailer.PriceSnapshot(
@@ -176,6 +191,7 @@ class NickelPriceMailerTests(unittest.TestCase):
             user_agent="test",
             state_file=None,
             send_only_on_change=False,
+            target_label=None,
             mail=mail_config,
             sheets=None,
         )
@@ -228,6 +244,7 @@ class NickelPriceMailerTests(unittest.TestCase):
                 user_agent="test",
                 state_file=state_file,
                 send_only_on_change=True,
+                target_label=None,
                 mail=mail_config,
                 sheets=None,
             )

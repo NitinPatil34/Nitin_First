@@ -1,6 +1,6 @@
 # Nickel Price Updates
 
-This repository contains a small Python service that records recurring nickel
+This repository contains a small Python service that records recurring SMM Shanghai 1# Nickel Cathode
 price updates from [metal.com](https://www.metal.com/nickel). It can append rows
 to Google Sheets and can also send email when SMTP is configured.
 
@@ -8,8 +8,8 @@ The service:
 
 - fetches metal.com's public nickel price JSON endpoint, with nickel pages as
   fallback sources;
-- extracts nickel price rows, units, changes, and dates where present;
-- appends the update to Google Sheets through a Google Apps Script webhook;
+- filters to `SMM Shanghai 1# Nickel Cathode (SMM-NI-RN-001)`;
+- appends only fetched time, value, unit, and price date to Google Sheets;
 - optionally sends the update through any SMTP provider;
 - can run once for GitHub Actions/cron or continuously on an interval;
 - uses only the Python standard library.
@@ -40,6 +40,7 @@ Configure at least one destination: Google Sheets or email.
 | `NICKEL_SMTP_SSL` | no | `false` | Use SMTP over SSL. |
 | `NICKEL_INTERVAL_MINUTES` | no | `1440` | Interval for continuous mode. |
 | `NICKEL_PRICE_URLS` | no | metal.com nickel API and pages | Comma-separated source URLs to fetch. |
+| `NICKEL_TARGET_LABEL` | no | `SMM Shanghai 1# Nickel Cathode (SMM-NI-RN-001)` | Product row to track. |
 | `NICKEL_SEND_ONLY_ON_CHANGE` | no | `false` | Update destinations only when extracted prices change. |
 | `NICKEL_STATE_FILE` | no | `.nickel_price_mailer.state` | Digest file used for change detection. |
 | `NICKEL_REQUEST_TIMEOUT_SECONDS` | no | `30` | HTTP request timeout. |
@@ -90,7 +91,7 @@ A GitHub Actions workflow is included at `.github/workflows/nickel-price-email.y
 It is configured for daily Google Sheets updates by default. After this branch is
 merged into `main`, add the Google Sheets webhook secrets in GitHub repository
 settings, then run the workflow manually once from the Actions tab to confirm
-rows are appended. See `DEPLOYMENT.md` for the full checklist.
+the focused row is appended. See `DEPLOYMENT.md` for the full checklist.
 
 ## Validate configuration
 

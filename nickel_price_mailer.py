@@ -31,6 +31,7 @@ DEFAULT_URLS = (
     "https://price.metal.com/Nickel",
 )
 DEFAULT_INTERVAL_MINUTES = 24 * 60
+DEFAULT_TARGET_LABEL = "SMM Shanghai 1# Nickel Cathode (SMM-NI-RN-001)"
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) NickelPriceMailer/1.0"
@@ -131,6 +132,7 @@ class AppConfig:
     user_agent: str
     state_file: str | None
     send_only_on_change: bool
+    target_label: str | None
     mail: MailConfig | None
     sheets: SheetsConfig | None
 
@@ -269,6 +271,7 @@ def load_config() -> AppConfig:
         user_agent=os.getenv("NICKEL_USER_AGENT", DEFAULT_USER_AGENT),
         state_file=os.getenv("NICKEL_STATE_FILE") or ".nickel_price_mailer.state",
         send_only_on_change=env_bool("NICKEL_SEND_ONLY_ON_CHANGE", False),
+        target_label=os.getenv("NICKEL_TARGET_LABEL", DEFAULT_TARGET_LABEL).strip() or None,
         mail=mail,
         sheets=sheets,
     )
@@ -513,6 +516,22 @@ def parse_snapshot(source_url: str, page_html: str) -> PriceSnapshot:
     )
 
 
+def filter_snapshots_by_target(
+    snapshots: Iterable[PriceSnapshot], target_label: str | None
+) -> tuple[PriceSnapshot, ...]:
+    if not target_label:
+        return tuple(snapshots)
+
+    filtered: list[PriceSnapshot] = []
+    for snapshot in snapshots:
+        rows = tuple(row for row in snapshot.rows if row.label == target_label)
+        if rows:
+            filtered.append(dataclasses.replace(snapshot, rows=rows))
+    if not filtered:
+        raise FetchError(f"Target nickel row not found: {target_label}")
+    return tuple(filtered)
+
+
 def fetch_snapshots(config: AppConfig) -> tuple[PriceSnapshot, ...]:
     snapshots: list[PriceSnapshot] = []
     errors: list[str] = []
@@ -578,11 +597,8 @@ def google_sheet_rows(snapshots: Iterable[PriceSnapshot]) -> list[dict[str, str]
             rows.append(
                 {
                     "fetched_at_utc": fetched_at,
-                    "source_url": snapshot.source_url,
-                    "label": row.label,
                     "value": row.value or "",
                     "unit": row.unit or "",
-                    "change": row.change or "",
                     "price_date": row.date or "",
                 }
             )
@@ -672,7 +688,7 @@ def write_digest(state_file: str | None, digest: str) -> None:
 def run_once(config: AppConfig) -> bool:
     """Fetch prices and update every configured destination."""
 
-    snapshots = fetch_snapshots(config)
+    snapshots = filter_snapshots_by_target(fetch_snapshots(config), config.target_label)
     digest = combined_digest(snapshots)
     if config.send_only_on_change and digest == read_previous_digest(config.state_file):
         print("No nickel price change detected; destinations not updated.", flush=True)
@@ -721,6 +737,7 @@ def print_config(config: AppConfig) -> None:
     print(f"  Interval minutes: {config.interval_minutes}")
     print(f"  Request timeout seconds: {config.request_timeout_seconds}")
     print(f"  Send only on change: {config.send_only_on_change}")
+    print(f"  Target label: {config.target_label or 'all nickel rows'}")
     print(f"  State file: {config.state_file}")
     print(f"  Google Sheets configured: {bool(config.sheets)}")
     if config.sheets:
