@@ -178,7 +178,7 @@ def env_int(name: str, default: int) -> int:
 
 def env_csv(name: str, default: Iterable[str] = ()) -> tuple[str, ...]:
     raw = os.getenv(name)
-    values = raw.split(",") if raw is not None else list(default)
+    values = raw.split(",") if raw is not None and raw.strip() else list(default)
     return tuple(item.strip() for item in values if item.strip())
 
 

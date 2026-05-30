@@ -33,6 +33,10 @@ SAMPLE_HTML = """
 
 
 class NickelPriceMailerTests(unittest.TestCase):
+    def test_env_csv_uses_default_for_blank_optional_variable(self):
+        with mock.patch.dict(os.environ, {"NICKEL_PRICE_URLS": ""}, clear=False):
+            self.assertEqual(mailer.env_csv("NICKEL_PRICE_URLS", ("https://default.example",)), ("https://default.example",))
+
     def test_parse_snapshot_extracts_nickel_rows(self):
         snapshot = mailer.parse_snapshot("https://www.metal.com/nickel", SAMPLE_HTML)
 

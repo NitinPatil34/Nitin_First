@@ -72,6 +72,14 @@ To receive an update every morning at 8:00:
 0 8 * * * cd /path/to/repo && /usr/bin/env bash -lc 'source .env && python3 nickel_price_mailer.py --once'
 ```
 
+
+## Deployment
+
+A GitHub Actions workflow is included at `.github/workflows/nickel-price-email.yml`.
+After this branch is merged into `main`, add the required SMTP secrets in GitHub
+repository settings, then run the workflow manually once from the Actions tab to
+confirm email delivery. See `DEPLOYMENT.md` for the full checklist.
+
 ## Validate configuration
 
 ```bash
