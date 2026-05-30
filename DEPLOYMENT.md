@@ -8,16 +8,22 @@ mailer on a schedule, so you do not need to maintain a server.
 1. Merge the nickel price email updater branch into `main`.
 2. In GitHub, open the repository settings.
 3. Go to **Secrets and variables** -> **Actions**.
-4. Add these repository secrets:
+4. For the default Gmail deployment in this repository, add one repository secret:
 
    | Secret | Example | Notes |
    | --- | --- | --- |
-   | `NICKEL_SMTP_HOST` | `smtp.gmail.com` | Required. |
-   | `NICKEL_SMTP_PORT` | `587` | Optional, defaults to `587`. |
-   | `NICKEL_SMTP_USERNAME` | `alerts@example.com` | Required for most providers. |
-   | `NICKEL_SMTP_PASSWORD` | app password | Required for most providers. |
-   | `NICKEL_EMAIL_FROM` | `alerts@example.com` | Required. |
-   | `NICKEL_EMAIL_TO` | `you@example.com` | Required. Use commas for multiple recipients. |
+   | `NICKEL` | Gmail app password | Used as the Gmail SMTP app password for `mla770900@gmail.com`. |
+
+   Advanced deployments may override the defaults with these optional secrets:
+
+   | Secret | Default | Notes |
+   | --- | --- | --- |
+   | `NICKEL_SMTP_HOST` | `smtp.gmail.com` | SMTP server host. |
+   | `NICKEL_SMTP_PORT` | `587` | SMTP port. |
+   | `NICKEL_SMTP_USERNAME` | `mla770900@gmail.com` | SMTP username. |
+   | `NICKEL_SMTP_PASSWORD` | `NICKEL` secret | SMTP password or app password. |
+   | `NICKEL_EMAIL_FROM` | `mla770900@gmail.com` | Sender email address. |
+   | `NICKEL_EMAIL_TO` | `mla770900@gmail.com` | Recipient email address. |
 
 5. Optional repository variables:
 
@@ -40,15 +46,16 @@ If you use Gmail, create an app password instead of using your account password:
 
 1. Enable 2-Step Verification on the Google account.
 2. Create an app password for mail.
-3. Store that app password as `NICKEL_SMTP_PASSWORD`.
+3. Store that app password as the repository secret `NICKEL`.
 
 Typical Gmail settings:
 
 ```text
 NICKEL_SMTP_HOST=smtp.gmail.com
 NICKEL_SMTP_PORT=587
-NICKEL_SMTP_USERNAME=your-address@gmail.com
-NICKEL_EMAIL_FROM=your-address@gmail.com
+NICKEL_SMTP_USERNAME=mla770900@gmail.com
+NICKEL_EMAIL_FROM=mla770900@gmail.com
+NICKEL_EMAIL_TO=mla770900@gmail.com
 NICKEL_SMTP_STARTTLS=true
 NICKEL_SMTP_SSL=false
 ```

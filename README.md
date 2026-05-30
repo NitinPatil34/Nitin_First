@@ -76,9 +76,11 @@ To receive an update every morning at 8:00:
 ## Deployment
 
 A GitHub Actions workflow is included at `.github/workflows/nickel-price-email.yml`.
-After this branch is merged into `main`, add the required SMTP secrets in GitHub
-repository settings, then run the workflow manually once from the Actions tab to
-confirm email delivery. See `DEPLOYMENT.md` for the full checklist.
+For the default Gmail deployment, add the Gmail app password as the repository
+secret `NICKEL`; the workflow defaults the sender and recipient to
+`mla770900@gmail.com`. After this branch is merged into `main`, run the workflow
+manually once from the Actions tab to confirm email delivery. See `DEPLOYMENT.md`
+for the full checklist.
 
 ## Validate configuration
 

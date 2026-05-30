@@ -1,6 +1,9 @@
 name: Nickel price email update
 
 on:
+  push:
+    branches:
+      - cursor/nickel-price-email-updates-5340
   schedule:
     # Runs every day at 08:00 UTC.
     - cron: "0 8 * * *"
@@ -11,12 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      NICKEL_SMTP_HOST: ${{ secrets.NICKEL_SMTP_HOST }}
-      NICKEL_SMTP_PORT: ${{ secrets.NICKEL_SMTP_PORT }}
-      NICKEL_SMTP_USERNAME: ${{ secrets.NICKEL_SMTP_USERNAME }}
-      NICKEL_SMTP_PASSWORD: ${{ secrets.NICKEL_SMTP_PASSWORD }}
-      NICKEL_EMAIL_FROM: ${{ secrets.NICKEL_EMAIL_FROM }}
-      NICKEL_EMAIL_TO: ${{ secrets.NICKEL_EMAIL_TO }}
+      NICKEL_SMTP_HOST: ${{ secrets.NICKEL_SMTP_HOST || 'smtp.gmail.com' }}
+      NICKEL_SMTP_PORT: ${{ secrets.NICKEL_SMTP_PORT || '587' }}
+      NICKEL_SMTP_USERNAME: ${{ secrets.NICKEL_SMTP_USERNAME || 'mla770900@gmail.com' }}
+      NICKEL_SMTP_PASSWORD: ${{ secrets.NICKEL_SMTP_PASSWORD || secrets.NICKEL }}
+      NICKEL_EMAIL_FROM: ${{ secrets.NICKEL_EMAIL_FROM || 'mla770900@gmail.com' }}
+      NICKEL_EMAIL_TO: ${{ secrets.NICKEL_EMAIL_TO || 'mla770900@gmail.com' }}
       NICKEL_SMTP_STARTTLS: ${{ vars.NICKEL_SMTP_STARTTLS || 'true' }}
       NICKEL_SMTP_SSL: ${{ vars.NICKEL_SMTP_SSL || 'false' }}
       NICKEL_REQUEST_TIMEOUT_SECONDS: ${{ vars.NICKEL_REQUEST_TIMEOUT_SECONDS || '30' }}
