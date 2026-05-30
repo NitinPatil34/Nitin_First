@@ -5,7 +5,8 @@ price updates from [metal.com](https://www.metal.com/nickel).
 
 The service:
 
-- fetches nickel price pages from metal.com / price.metal.com;
+- fetches metal.com's public nickel price JSON endpoint, with nickel pages as
+  fallback sources;
 - extracts visible nickel price rows, units, changes, and dates where present;
 - sends the update through any SMTP provider;
 - can run once for cron or continuously on an interval;
@@ -31,7 +32,7 @@ Set these environment variables before running the script:
 | `NICKEL_SMTP_STARTTLS` | no | `true` | Use STARTTLS for non-SSL SMTP connections. |
 | `NICKEL_SMTP_SSL` | no | `false` | Use SMTP over SSL. |
 | `NICKEL_INTERVAL_MINUTES` | no | `1440` | Interval for continuous mode. |
-| `NICKEL_PRICE_URLS` | no | metal.com nickel pages | Comma-separated source URLs to fetch. |
+| `NICKEL_PRICE_URLS` | no | metal.com nickel API and pages | Comma-separated source URLs to fetch. |
 | `NICKEL_SEND_ONLY_ON_CHANGE` | no | `false` | Send only when extracted prices change. |
 | `NICKEL_STATE_FILE` | no | `.nickel_price_mailer.state` | Digest file used for change detection. |
 | `NICKEL_REQUEST_TIMEOUT_SECONDS` | no | `30` | HTTP request timeout. |

@@ -11,6 +11,7 @@ import dataclasses
 import datetime as dt
 import hashlib
 import html
+import json
 import os
 import re
 import smtplib
@@ -24,7 +25,11 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-DEFAULT_URLS = ("https://www.metal.com/nickel", "https://price.metal.com/Nickel")
+DEFAULT_URLS = (
+    "https://platform.metal.com/spotoverseascenter/v1/prices/product_list?second_name=Nickel&page=1&page_size=50",
+    "https://www.metal.com/nickel",
+    "https://price.metal.com/Nickel",
+)
 DEFAULT_INTERVAL_MINUTES = 24 * 60
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -220,8 +225,11 @@ def fetch_page(url: str, timeout_seconds: int, user_agent: str) -> str:
         url,
         headers={
             "User-Agent": user_agent,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept": "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://www.metal.com",
+            "Referer": "https://www.metal.com/nickel",
+            "Source-Type": "pc",
         },
     )
     try:
@@ -254,6 +262,8 @@ def is_price_token(token: str) -> bool:
     numeric = cleaned.replace(",", "").lstrip("+-")
     if numeric.isdigit() and 1900 <= int(numeric) <= 2100:
         return False
+    if numeric.isdigit() and int(numeric) < 100 and "," not in cleaned and "." not in cleaned and "-" not in cleaned:
+        return False
     return True
 
 
@@ -267,6 +277,8 @@ def first_matching(pattern: re.Pattern[str], values: Iterable[str]) -> str | Non
 
 def find_price_value(values: Iterable[str]) -> str | None:
     for value in values:
+        if DATE_TOKEN_RE.search(value):
+            continue
         for token in re.split(r"\s+", value):
             cleaned = token.strip().strip(",:;()[]")
             if is_price_token(cleaned):
@@ -297,7 +309,14 @@ def extract_price_rows(parts: tuple[str, ...]) -> tuple[PriceRow, ...]:
         lowered = part.lower()
         if "nickel" not in lowered or "http" in lowered:
             continue
-        if lowered in {"nickel prices", "nickel price", "nickel price chart"}:
+        if (
+            lowered in {"nickel prices", "nickel price", "nickel price chart"}
+            or lowered.startswith("nickel prices chart")
+            or lowered.startswith("nickel price chart")
+            or lowered.startswith("[smm")
+            or "market flash" in lowered
+            or "price of nickel per" in lowered
+        ):
             continue
         if len(part) > 180:
             continue
@@ -334,7 +353,102 @@ def make_raw_excerpt(parts: tuple[str, ...]) -> str:
     return "\n".join(selected)[:2_000]
 
 
+def iter_products(node: object) -> Iterable[dict[str, object]]:
+    if isinstance(node, dict):
+        products = node.get("products")
+        if isinstance(products, list):
+            for product in products:
+                if isinstance(product, dict):
+                    yield product
+        for value in node.values():
+            yield from iter_products(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from iter_products(item)
+
+
+def pick_price_value(price: dict[str, object]) -> str | None:
+    average = stringify(price.get("average"))
+    low = stringify(price.get("low"))
+    high = stringify(price.get("high"))
+    if average and low and high:
+        return f"{average} ({low}-{high})"
+    if average:
+        return average
+    for key in ("mid_rate", "rate", "last", "close", "price", "sell", "buy"):
+        value = stringify(price.get(key))
+        if value:
+            return value
+    if low and high:
+        return f"{low}-{high}"
+    return None
+
+
+def stringify(value: object) -> str | None:
+    if value is None:
+        return None
+    text = normalize_space(str(value))
+    return text or None
+
+
+def product_to_price_row(product: dict[str, object]) -> PriceRow | None:
+    name = stringify(product.get("product_name"))
+    if not name or "nickel" not in name.lower():
+        return None
+
+    price = product.get("newest_price")
+    if not isinstance(price, dict):
+        return None
+
+    product_code = stringify(product.get("product_code"))
+    label = name if not product_code else f"{name} ({product_code})"
+    value = pick_price_value(price)
+    unit = stringify(product.get("unit")) or stringify(product.get("unit_origin"))
+    change = stringify(price.get("change"))
+    change_percent = stringify(price.get("change_rate_percent"))
+    if change and change_percent:
+        change = f"{change} ({change_percent})"
+    elif change_percent:
+        change = change_percent
+    date = stringify(price.get("renew_date"))
+    renew_time = stringify(price.get("renew_time"))
+    if date and renew_time:
+        date = f"{date} {renew_time}"
+
+    if not value and not change and not date:
+        return None
+    return PriceRow(label=label, value=value, unit=unit, change=change, date=date)
+
+
+def parse_json_snapshot(source_url: str, response_text: str) -> PriceSnapshot:
+    payload = json.loads(response_text)
+    data = payload.get("data", payload) if isinstance(payload, dict) else payload
+    rows: list[PriceRow] = []
+    seen: set[str] = set()
+    for product in iter_products(data):
+        row = product_to_price_row(product)
+        if not row or row.label.lower() in seen:
+            continue
+        seen.add(row.label.lower())
+        rows.append(row)
+        if len(rows) >= 20:
+            break
+
+    excerpt_source = [row.as_text() for row in rows] or [response_text[:2_000]]
+    return PriceSnapshot(
+        source_url=source_url,
+        fetched_at_utc=dt.datetime.now(dt.timezone.utc),
+        title="metal.com nickel price API",
+        rows=tuple(rows),
+        raw_excerpt="\n".join(excerpt_source)[:2_000],
+    )
+
+
 def parse_snapshot(source_url: str, page_html: str) -> PriceSnapshot:
+    stripped = page_html.lstrip()
+    if stripped.startswith(("{", "[")):
+        return parse_json_snapshot(source_url, page_html)
+
     parts = extract_text_parts(page_html)
     return PriceSnapshot(
         source_url=source_url,
@@ -356,7 +470,8 @@ def fetch_snapshots(config: AppConfig) -> tuple[PriceSnapshot, ...]:
             errors.append(str(exc))
     if not snapshots:
         raise FetchError("; ".join(errors) if errors else "No price sources configured")
-    return tuple(snapshots)
+    snapshots_with_rows = tuple(snapshot for snapshot in snapshots if snapshot.has_price_rows)
+    return snapshots_with_rows or tuple(snapshots)
 
 
 def build_email_body(snapshots: Iterable[PriceSnapshot]) -> str:
