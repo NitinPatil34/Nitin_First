@@ -1,64 +1,60 @@
 # Deployment
 
 The recommended deployment for this repository is GitHub Actions. It runs the
-mailer on a schedule, so you do not need to maintain a server.
+updater on a schedule, so you do not need to maintain a server. The default
+deployment writes nickel prices to Google Sheets and does not require email.
 
-## GitHub Actions deployment
+## Google Sheets deployment
 
-1. Merge the nickel price email updater branch into `main`.
+1. Create/open the Google Sheet where nickel prices should be stored.
+2. Open **Extensions** -> **Apps Script**.
+3. Paste the contents of `google_sheets_app_script.gs`.
+4. Optional but recommended: in Apps Script, open **Project Settings** ->
+   **Script properties** and add:
+
+   ```text
+   NICKEL_SHEETS_SHARED_SECRET=<any random value you choose>
+   ```
+
+5. Click **Deploy** -> **New deployment**.
+6. Choose type **Web app**.
+7. Set **Execute as** to yourself.
+8. Set **Who has access** to **Anyone with the link**. The optional shared
+   secret prevents unauthorized writes.
+9. Deploy and copy the web app URL.
+
+## GitHub Actions setup
+
+1. Merge the nickel price updater branch into `main`.
 2. In GitHub, open the repository settings.
 3. Go to **Secrets and variables** -> **Actions**.
-4. For the default Gmail deployment in this repository, add one repository secret:
+4. Add these repository secrets:
 
-   | Secret | Example | Notes |
+   | Secret | Required | Notes |
    | --- | --- | --- |
-   | `NICKEL` | Gmail app password | Used as the Gmail SMTP app password for `mla770900@gmail.com`. |
+   | `NICKEL_SHEETS_WEBHOOK_URL` | yes | Google Apps Script web app URL. |
+   | `NICKEL_SHEETS_SHARED_SECRET` | if configured in Apps Script | Must match the Apps Script property. |
 
-   Advanced deployments may override the defaults with these optional secrets:
-
-   | Secret | Default | Notes |
-   | --- | --- | --- |
-   | `NICKEL_SMTP_HOST` | `smtp.gmail.com` | SMTP server host. |
-   | `NICKEL_SMTP_PORT` | `587` | SMTP port. |
-   | `NICKEL_SMTP_USERNAME` | `mla770900@gmail.com` | SMTP username. |
-   | `NICKEL_SMTP_PASSWORD` | `NICKEL` secret | SMTP password or app password. |
-   | `NICKEL_EMAIL_FROM` | `mla770900@gmail.com` | Sender email address. |
-   | `NICKEL_EMAIL_TO` | `mla770900@gmail.com` | Recipient email address. |
-
-5. Optional repository variables:
-
-   | Variable | Default | Notes |
-   | --- | --- | --- |
-   | `NICKEL_SMTP_STARTTLS` | `true` | Use STARTTLS, typically port `587`. |
-   | `NICKEL_SMTP_SSL` | `false` | Use SSL, typically port `465`. |
-   | `NICKEL_REQUEST_TIMEOUT_SECONDS` | `30` | HTTP timeout for metal.com requests. |
-   | `NICKEL_PRICE_URLS` | built-in metal.com nickel API and fallbacks | Override source URLs only if needed. |
-
-6. Open the **Actions** tab and choose **Nickel price email update**.
-7. Select **Run workflow** to send a test email immediately.
+5. Open the **Actions** tab and choose **Nickel price update**.
+6. Select **Run workflow** to append a test set of rows immediately.
 
 The workflow is scheduled for 08:00 UTC every day. To change the schedule, edit
 `.github/workflows/nickel-price-email.yml`.
 
-## Gmail note
+## Optional email delivery
 
-If you use Gmail, create an app password instead of using your account password:
+Email is disabled by default in the GitHub Actions workflow with
+`NICKEL_DISABLE_EMAIL=true`. If you later want email too, set repository variable
+`NICKEL_DISABLE_EMAIL=false` and add these repository secrets:
 
-1. Enable 2-Step Verification on the Google account.
-2. Create an app password for mail.
-3. Store that app password as the repository secret `NICKEL`.
-
-Typical Gmail settings:
-
-```text
-NICKEL_SMTP_HOST=smtp.gmail.com
-NICKEL_SMTP_PORT=587
-NICKEL_SMTP_USERNAME=mla770900@gmail.com
-NICKEL_EMAIL_FROM=mla770900@gmail.com
-NICKEL_EMAIL_TO=mla770900@gmail.com
-NICKEL_SMTP_STARTTLS=true
-NICKEL_SMTP_SSL=false
-```
+| Secret | Example | Notes |
+| --- | --- | --- |
+| `NICKEL_SMTP_HOST` | `smtp.gmail.com` | SMTP server host. |
+| `NICKEL_SMTP_PORT` | `587` | SMTP port. |
+| `NICKEL_SMTP_USERNAME` | sender email | SMTP username. |
+| `NICKEL_SMTP_PASSWORD` | app password | SMTP password or app password. |
+| `NICKEL_EMAIL_FROM` | sender email | Sender email address. |
+| `NICKEL_EMAIL_TO` | recipient email | Comma-separated recipients. |
 
 ## Local/server deployment
 

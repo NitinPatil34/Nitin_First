@@ -102,6 +102,46 @@ class NickelPriceMailerTests(unittest.TestCase):
         self.assertEqual(row.change, "153.09 (0.82%)")
         self.assertEqual(row.date, "2026-05-29")
 
+    def test_load_config_allows_google_sheets_without_email(self):
+        env = {
+            "NICKEL_DISABLE_EMAIL": "true",
+            "NICKEL_SHEETS_WEBHOOK_URL": "https://script.google.com/macros/s/example/exec",
+            "NICKEL_SHEETS_SHARED_SECRET": "shared-secret",
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
+            config = mailer.load_config()
+
+        self.assertIsNone(config.mail)
+        self.assertIsNotNone(config.sheets)
+        self.assertEqual(config.sheets.webhook_url, "https://script.google.com/macros/s/example/exec")
+        self.assertEqual(config.sheets.shared_secret, "shared-secret")
+
+    def test_google_sheet_rows_flattens_snapshot_rows(self):
+        snapshot = mailer.PriceSnapshot(
+            source_url="https://www.metal.com/nickel",
+            fetched_at_utc=dt.datetime(2026, 5, 30, 12, 0, tzinfo=dt.timezone.utc),
+            title="Nickel",
+            rows=(mailer.PriceRow("SMM Shanghai #1 Nickel Cathode", "122,325", "CNY/mt", "+800", "May 30, 2026"),),
+            raw_excerpt="",
+        )
+
+        rows = mailer.google_sheet_rows((snapshot,))
+
+        self.assertEqual(
+            rows,
+            [
+                {
+                    "fetched_at_utc": "2026-05-30 12:00:00 UTC",
+                    "source_url": "https://www.metal.com/nickel",
+                    "label": "SMM Shanghai #1 Nickel Cathode",
+                    "value": "122,325",
+                    "unit": "CNY/mt",
+                    "change": "+800",
+                    "price_date": "May 30, 2026",
+                }
+            ],
+        )
+
     def test_build_email_body_includes_source_and_rows(self):
         snapshot = mailer.PriceSnapshot(
             source_url="https://www.metal.com/nickel",
@@ -137,6 +177,7 @@ class NickelPriceMailerTests(unittest.TestCase):
             state_file=None,
             send_only_on_change=False,
             mail=mail_config,
+            sheets=None,
         )
         api_payload = json.dumps(
             {
@@ -188,6 +229,7 @@ class NickelPriceMailerTests(unittest.TestCase):
                 state_file=state_file,
                 send_only_on_change=True,
                 mail=mail_config,
+                sheets=None,
             )
             snapshot = mailer.PriceSnapshot(
                 source_url="https://www.metal.com/nickel",

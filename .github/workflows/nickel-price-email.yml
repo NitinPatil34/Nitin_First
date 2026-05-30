@@ -1,4 +1,4 @@
-name: Nickel price email update
+name: Nickel price update
 
 on:
   schedule:
@@ -11,12 +11,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      NICKEL_SMTP_HOST: ${{ secrets.NICKEL_SMTP_HOST || 'smtp.gmail.com' }}
-      NICKEL_SMTP_PORT: ${{ secrets.NICKEL_SMTP_PORT || '587' }}
-      NICKEL_SMTP_USERNAME: ${{ secrets.NICKEL_SMTP_USERNAME || 'mla770900@gmail.com' }}
+      NICKEL_DISABLE_EMAIL: ${{ vars.NICKEL_DISABLE_EMAIL || 'true' }}
+      NICKEL_SMTP_HOST: ${{ secrets.NICKEL_SMTP_HOST }}
+      NICKEL_SMTP_PORT: ${{ secrets.NICKEL_SMTP_PORT }}
+      NICKEL_SMTP_USERNAME: ${{ secrets.NICKEL_SMTP_USERNAME }}
       NICKEL_SMTP_PASSWORD: ${{ secrets.NICKEL_SMTP_PASSWORD || secrets.NICKEL }}
-      NICKEL_EMAIL_FROM: ${{ secrets.NICKEL_EMAIL_FROM || 'mla770900@gmail.com' }}
-      NICKEL_EMAIL_TO: ${{ secrets.NICKEL_EMAIL_TO || 'mla770900@gmail.com' }}
+      NICKEL_EMAIL_FROM: ${{ secrets.NICKEL_EMAIL_FROM }}
+      NICKEL_EMAIL_TO: ${{ secrets.NICKEL_EMAIL_TO }}
+      NICKEL_SHEETS_WEBHOOK_URL: ${{ secrets.NICKEL_SHEETS_WEBHOOK_URL }}
+      NICKEL_SHEETS_SHARED_SECRET: ${{ secrets.NICKEL_SHEETS_SHARED_SECRET }}
       NICKEL_SMTP_STARTTLS: ${{ vars.NICKEL_SMTP_STARTTLS || 'true' }}
       NICKEL_SMTP_SSL: ${{ vars.NICKEL_SMTP_SSL || 'false' }}
       NICKEL_REQUEST_TIMEOUT_SECONDS: ${{ vars.NICKEL_REQUEST_TIMEOUT_SECONDS || '30' }}
@@ -31,8 +34,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Validate mailer configuration
+      - name: Validate updater configuration
         run: python3 nickel_price_mailer.py --print-config
 
-      - name: Send nickel price email
+      - name: Update nickel price destinations
         run: python3 nickel_price_mailer.py --once

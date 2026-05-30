@@ -59,6 +59,10 @@ class FetchError(RuntimeError):
     """Raised when a metal.com page cannot be fetched."""
 
 
+class SheetsError(RuntimeError):
+    """Raised when Google Sheets cannot be updated."""
+
+
 @dataclasses.dataclass(frozen=True)
 class PriceRow:
     """A price-like line extracted from a metal.com page."""
@@ -114,6 +118,12 @@ class MailConfig:
 
 
 @dataclasses.dataclass(frozen=True)
+class SheetsConfig:
+    webhook_url: str
+    shared_secret: str | None
+
+
+@dataclasses.dataclass(frozen=True)
 class AppConfig:
     urls: tuple[str, ...]
     interval_minutes: int
@@ -121,7 +131,8 @@ class AppConfig:
     user_agent: str
     state_file: str | None
     send_only_on_change: bool
-    mail: MailConfig
+    mail: MailConfig | None
+    sheets: SheetsConfig | None
 
 
 class TextExtractor(HTMLParser):
@@ -194,10 +205,14 @@ def normalize_smtp_password(smtp_host: str, smtp_username: str | None, password:
     return password
 
 
-def load_config() -> AppConfig:
+def load_mail_config() -> MailConfig | None:
+    if env_bool("NICKEL_DISABLE_EMAIL", False):
+        return None
     recipients = env_csv("NICKEL_EMAIL_TO")
     smtp_host = os.getenv("NICKEL_SMTP_HOST", "").strip()
     sender = os.getenv("NICKEL_EMAIL_FROM", "").strip()
+    if not smtp_host and not sender and not recipients:
+        return None
 
     missing = []
     if not smtp_host:
@@ -207,7 +222,7 @@ def load_config() -> AppConfig:
     if not recipients:
         missing.append("NICKEL_EMAIL_TO")
     if missing:
-        raise ConfigError("Missing required environment variables: " + ", ".join(missing))
+        raise ConfigError("Missing email environment variables: " + ", ".join(missing))
 
     use_ssl = env_bool("NICKEL_SMTP_SSL", False)
     default_port = 465 if use_ssl else 587
@@ -217,7 +232,7 @@ def load_config() -> AppConfig:
         smtp_username=smtp_username,
         password=os.getenv("NICKEL_SMTP_PASSWORD") or None,
     )
-    mail = MailConfig(
+    return MailConfig(
         smtp_host=smtp_host,
         smtp_port=env_int("NICKEL_SMTP_PORT", default_port),
         smtp_username=smtp_username,
@@ -227,6 +242,26 @@ def load_config() -> AppConfig:
         use_starttls=env_bool("NICKEL_SMTP_STARTTLS", not use_ssl),
         use_ssl=use_ssl,
     )
+
+
+def load_sheets_config() -> SheetsConfig | None:
+    webhook_url = os.getenv("NICKEL_SHEETS_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        return None
+    return SheetsConfig(
+        webhook_url=webhook_url,
+        shared_secret=os.getenv("NICKEL_SHEETS_SHARED_SECRET") or None,
+    )
+
+
+def load_config() -> AppConfig:
+    mail = load_mail_config()
+    sheets = load_sheets_config()
+    if not mail and not sheets:
+        raise ConfigError(
+            "Configure at least one destination: email SMTP variables or NICKEL_SHEETS_WEBHOOK_URL"
+        )
+
     return AppConfig(
         urls=env_csv("NICKEL_PRICE_URLS", DEFAULT_URLS),
         interval_minutes=env_int("NICKEL_INTERVAL_MINUTES", DEFAULT_INTERVAL_MINUTES),
@@ -235,6 +270,7 @@ def load_config() -> AppConfig:
         state_file=os.getenv("NICKEL_STATE_FILE") or ".nickel_price_mailer.state",
         send_only_on_change=env_bool("NICKEL_SEND_ONLY_ON_CHANGE", False),
         mail=mail,
+        sheets=sheets,
     )
 
 
@@ -534,6 +570,54 @@ def build_subject(snapshots: Iterable[PriceSnapshot]) -> str:
     return f"Nickel price update - {today}"
 
 
+def google_sheet_rows(snapshots: Iterable[PriceSnapshot]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for snapshot in snapshots:
+        fetched_at = snapshot.fetched_at_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
+        for row in snapshot.rows:
+            rows.append(
+                {
+                    "fetched_at_utc": fetched_at,
+                    "source_url": snapshot.source_url,
+                    "label": row.label,
+                    "value": row.value or "",
+                    "unit": row.unit or "",
+                    "change": row.change or "",
+                    "price_date": row.date or "",
+                }
+            )
+    return rows
+
+
+def post_to_google_sheets(config: SheetsConfig, snapshots: Iterable[PriceSnapshot], timeout_seconds: int) -> int:
+    rows = google_sheet_rows(snapshots)
+    if not rows:
+        raise SheetsError("No nickel price rows available to write to Google Sheets")
+
+    payload = {
+        "secret": config.shared_secret,
+        "rows": rows,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    request = Request(
+        config.webhook_url,
+        data=data,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": DEFAULT_USER_AGENT,
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            if response.status >= 400:
+                raise SheetsError(f"Google Sheets webhook failed with HTTP {response.status}: {body}")
+    except (HTTPError, URLError, TimeoutError) as exc:
+        raise SheetsError(f"Unable to update Google Sheets: {exc}") from exc
+    return len(rows)
+
+
 def send_email(mail: MailConfig, subject: str, body: str) -> None:
     message = EmailMessage()
     message["Subject"] = subject
@@ -586,17 +670,24 @@ def write_digest(state_file: str | None, digest: str) -> None:
 
 
 def run_once(config: AppConfig) -> bool:
-    """Fetch prices and send one email. Returns True when an email is sent."""
+    """Fetch prices and update every configured destination."""
 
     snapshots = fetch_snapshots(config)
     digest = combined_digest(snapshots)
     if config.send_only_on_change and digest == read_previous_digest(config.state_file):
-        print("No nickel price change detected; email not sent.", flush=True)
+        print("No nickel price change detected; destinations not updated.", flush=True)
         return False
 
-    send_email(config.mail, build_subject(snapshots), build_email_body(snapshots))
+    actions: list[str] = []
+    if config.sheets:
+        row_count = post_to_google_sheets(config.sheets, snapshots, config.request_timeout_seconds)
+        actions.append(f"Google Sheets updated with {row_count} rows")
+    if config.mail:
+        send_email(config.mail, build_subject(snapshots), build_email_body(snapshots))
+        actions.append("email sent")
+
     write_digest(config.state_file, digest)
-    print("Nickel price email sent.", flush=True)
+    print("Nickel price update complete: " + "; ".join(actions) + ".", flush=True)
     return True
 
 
@@ -610,11 +701,11 @@ def run_forever(config: AppConfig) -> None:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Email recurring nickel price updates from metal.com.")
+    parser = argparse.ArgumentParser(description="Send recurring nickel price updates from metal.com.")
     parser.add_argument(
         "--once",
         action="store_true",
-        help="send one update and exit; useful for cron or manual testing",
+        help="send one update to configured destinations and exit; useful for cron or manual testing",
     )
     parser.add_argument(
         "--print-config",
@@ -625,18 +716,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def print_config(config: AppConfig) -> None:
-    print("Nickel price mailer configuration:")
+    print("Nickel price updater configuration:")
     print(f"  URLs: {', '.join(config.urls)}")
     print(f"  Interval minutes: {config.interval_minutes}")
     print(f"  Request timeout seconds: {config.request_timeout_seconds}")
     print(f"  Send only on change: {config.send_only_on_change}")
     print(f"  State file: {config.state_file}")
-    print(f"  SMTP host: {config.mail.smtp_host}:{config.mail.smtp_port}")
-    print(f"  SMTP SSL: {config.mail.use_ssl}")
-    print(f"  SMTP STARTTLS: {config.mail.use_starttls}")
-    print(f"  SMTP username configured: {bool(config.mail.smtp_username)}")
-    print(f"  Sender: {config.mail.sender}")
-    print(f"  Recipients: {', '.join(config.mail.recipients)}")
+    print(f"  Google Sheets configured: {bool(config.sheets)}")
+    if config.sheets:
+        print(f"  Google Sheets shared secret configured: {bool(config.sheets.shared_secret)}")
+    print(f"  Email configured: {bool(config.mail)}")
+    if config.mail:
+        print(f"  SMTP host: {config.mail.smtp_host}:{config.mail.smtp_port}")
+        print(f"  SMTP SSL: {config.mail.use_ssl}")
+        print(f"  SMTP STARTTLS: {config.mail.use_starttls}")
+        print(f"  SMTP username configured: {bool(config.mail.smtp_username)}")
+        print(f"  Sender: {config.mail.sender}")
+        print(f"  Recipients: {', '.join(config.mail.recipients)}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -660,6 +756,9 @@ def main(argv: list[str] | None = None) -> int:
     except smtplib.SMTPException as exc:
         print(f"Email error: {exc}", file=sys.stderr)
         return 4
+    except SheetsError as exc:
+        print(f"Google Sheets error: {exc}", file=sys.stderr)
+        return 5
 
 
 if __name__ == "__main__":
