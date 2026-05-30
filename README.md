@@ -91,7 +91,7 @@ python3 nickel_price_mailer.py
 ## Deployment
 
 A GitHub Actions workflow is included at `.github/workflows/nickel-price-email.yml`.
-It is configured for Google Sheets updates about once per minute by default. After this branch is
+It is configured for daily Google Sheets updates by default. After this branch is
 merged into `main`, add the Google Sheets webhook secrets in GitHub repository
 settings, then run the workflow manually once from the Actions tab to confirm
 the focused row is appended. See `DEPLOYMENT.md` for the full checklist.
