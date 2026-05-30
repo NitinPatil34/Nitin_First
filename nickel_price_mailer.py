@@ -182,6 +182,18 @@ def env_csv(name: str, default: Iterable[str] = ()) -> tuple[str, ...]:
     return tuple(item.strip() for item in values if item.strip())
 
 
+def normalize_smtp_password(smtp_host: str, smtp_username: str | None, password: str | None) -> str | None:
+    if not password:
+        return password
+    # Gmail displays app passwords in groups with spaces, but SMTP expects the
+    # compact 16-character value. Preserve spaces for non-Gmail providers.
+    host = smtp_host.lower()
+    username = (smtp_username or "").lower()
+    if host.endswith("gmail.com") or username.endswith("@gmail.com"):
+        return re.sub(r"\s+", "", password)
+    return password
+
+
 def load_config() -> AppConfig:
     recipients = env_csv("NICKEL_EMAIL_TO")
     smtp_host = os.getenv("NICKEL_SMTP_HOST", "").strip()
@@ -199,11 +211,17 @@ def load_config() -> AppConfig:
 
     use_ssl = env_bool("NICKEL_SMTP_SSL", False)
     default_port = 465 if use_ssl else 587
+    smtp_username = os.getenv("NICKEL_SMTP_USERNAME") or None
+    smtp_password = normalize_smtp_password(
+        smtp_host=smtp_host,
+        smtp_username=smtp_username,
+        password=os.getenv("NICKEL_SMTP_PASSWORD") or None,
+    )
     mail = MailConfig(
         smtp_host=smtp_host,
         smtp_port=env_int("NICKEL_SMTP_PORT", default_port),
-        smtp_username=os.getenv("NICKEL_SMTP_USERNAME") or None,
-        smtp_password=os.getenv("NICKEL_SMTP_PASSWORD") or None,
+        smtp_username=smtp_username,
+        smtp_password=smtp_password,
         sender=sender,
         recipients=recipients,
         use_starttls=env_bool("NICKEL_SMTP_STARTTLS", not use_ssl),

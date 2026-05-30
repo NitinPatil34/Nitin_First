@@ -37,6 +37,15 @@ class NickelPriceMailerTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"NICKEL_PRICE_URLS": ""}, clear=False):
             self.assertEqual(mailer.env_csv("NICKEL_PRICE_URLS", ("https://default.example",)), ("https://default.example",))
 
+    def test_normalize_smtp_password_removes_gmail_app_password_spaces(self):
+        password = mailer.normalize_smtp_password(
+            smtp_host="smtp.gmail.com",
+            smtp_username="mla770900@gmail.com",
+            password="abcd efgh ijkl mnop",
+        )
+
+        self.assertEqual(password, "abcdefghijklmnop")
+
     def test_parse_snapshot_extracts_nickel_rows(self):
         snapshot = mailer.parse_snapshot("https://www.metal.com/nickel", SAMPLE_HTML)
 
