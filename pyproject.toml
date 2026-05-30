@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nickel-price-email-updates"
+version = "0.1.0"
+description = "Email recurring nickel price updates from metal.com."
+requires-python = ">=3.11"
+readme = "README.md"
+
+[project.scripts]
+nickel-price-mailer = "nickel_price_mailer:main"
+
+[tool.setuptools]
+py-modules = ["nickel_price_mailer"]

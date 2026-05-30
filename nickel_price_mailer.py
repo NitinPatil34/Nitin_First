@@ -1,0 +1,533 @@
+"""Send recurring email updates for nickel prices from metal.com.
+
+The script is intentionally dependency-free so it can run from cron, systemd,
+or a simple container without additional package installation.
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import datetime as dt
+import hashlib
+import html
+import os
+import re
+import smtplib
+import ssl
+import sys
+import time
+from email.message import EmailMessage
+from html.parser import HTMLParser
+from typing import Iterable
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+
+DEFAULT_URLS = ("https://www.metal.com/nickel", "https://price.metal.com/Nickel")
+DEFAULT_INTERVAL_MINUTES = 24 * 60
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) NickelPriceMailer/1.0"
+)
+
+PRICE_TOKEN_RE = re.compile(
+    r"^[+-]?(?:\d{1,3}(?:,\d{3})+|\d{4,}|\d+(?:\.\d+)?)(?:-\d{1,3}(?:,\d{3})*|\.\d+)?%?$"
+)
+DATE_TOKEN_RE = re.compile(
+    r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}"
+    r"|\d{4}-\d{1,2}-\d{1,2}"
+    r"|\d{1,2}/\d{1,2}/\d{2,4}",
+    re.IGNORECASE,
+)
+UNIT_RE = re.compile(
+    r"(?:CNY|USD|RMB|\$|¥)\s*/?\s*(?:mt|t|ton|lb)?|yuan/mt|usd/mt|cny/mt",
+    re.IGNORECASE,
+)
+
+
+class ConfigError(RuntimeError):
+    """Raised when required environment configuration is missing."""
+
+
+class FetchError(RuntimeError):
+    """Raised when a metal.com page cannot be fetched."""
+
+
+@dataclasses.dataclass(frozen=True)
+class PriceRow:
+    """A price-like line extracted from a metal.com page."""
+
+    label: str
+    value: str | None = None
+    unit: str | None = None
+    change: str | None = None
+    date: str | None = None
+
+    def as_text(self) -> str:
+        parts = [self.label]
+        if self.value:
+            parts.append(f"price/avg: {self.value}")
+        if self.unit:
+            parts.append(f"unit: {self.unit}")
+        if self.change:
+            parts.append(f"change: {self.change}")
+        if self.date:
+            parts.append(f"date: {self.date}")
+        return " | ".join(parts)
+
+
+@dataclasses.dataclass(frozen=True)
+class PriceSnapshot:
+    """Extracted data and metadata for one source URL."""
+
+    source_url: str
+    fetched_at_utc: dt.datetime
+    title: str | None
+    rows: tuple[PriceRow, ...]
+    raw_excerpt: str
+
+    @property
+    def has_price_rows(self) -> bool:
+        return bool(self.rows)
+
+    def digest(self) -> str:
+        relevant_text = "\n".join(row.as_text() for row in self.rows) or self.raw_excerpt
+        return hashlib.sha256(relevant_text.encode("utf-8")).hexdigest()
+
+
+@dataclasses.dataclass(frozen=True)
+class MailConfig:
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str | None
+    smtp_password: str | None
+    sender: str
+    recipients: tuple[str, ...]
+    use_starttls: bool
+    use_ssl: bool
+
+
+@dataclasses.dataclass(frozen=True)
+class AppConfig:
+    urls: tuple[str, ...]
+    interval_minutes: int
+    request_timeout_seconds: int
+    user_agent: str
+    state_file: str | None
+    send_only_on_change: bool
+    mail: MailConfig
+
+
+class TextExtractor(HTMLParser):
+    """Collect human-visible text from HTML while ignoring noisy elements."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._skip_depth = 0
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in {"script", "style", "noscript", "svg"}:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in {"script", "style", "noscript", "svg"} and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            return
+        text = normalize_space(html.unescape(data))
+        if text:
+            self._parts.append(text)
+
+    @property
+    def parts(self) -> tuple[str, ...]:
+        return tuple(self._parts)
+
+
+def normalize_space(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be an integer") from exc
+    if value <= 0:
+        raise ConfigError(f"{name} must be greater than zero")
+    return value
+
+
+def env_csv(name: str, default: Iterable[str] = ()) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    values = raw.split(",") if raw is not None else list(default)
+    return tuple(item.strip() for item in values if item.strip())
+
+
+def load_config() -> AppConfig:
+    recipients = env_csv("NICKEL_EMAIL_TO")
+    smtp_host = os.getenv("NICKEL_SMTP_HOST", "").strip()
+    sender = os.getenv("NICKEL_EMAIL_FROM", "").strip()
+
+    missing = []
+    if not smtp_host:
+        missing.append("NICKEL_SMTP_HOST")
+    if not sender:
+        missing.append("NICKEL_EMAIL_FROM")
+    if not recipients:
+        missing.append("NICKEL_EMAIL_TO")
+    if missing:
+        raise ConfigError("Missing required environment variables: " + ", ".join(missing))
+
+    use_ssl = env_bool("NICKEL_SMTP_SSL", False)
+    default_port = 465 if use_ssl else 587
+    mail = MailConfig(
+        smtp_host=smtp_host,
+        smtp_port=env_int("NICKEL_SMTP_PORT", default_port),
+        smtp_username=os.getenv("NICKEL_SMTP_USERNAME") or None,
+        smtp_password=os.getenv("NICKEL_SMTP_PASSWORD") or None,
+        sender=sender,
+        recipients=recipients,
+        use_starttls=env_bool("NICKEL_SMTP_STARTTLS", not use_ssl),
+        use_ssl=use_ssl,
+    )
+    return AppConfig(
+        urls=env_csv("NICKEL_PRICE_URLS", DEFAULT_URLS),
+        interval_minutes=env_int("NICKEL_INTERVAL_MINUTES", DEFAULT_INTERVAL_MINUTES),
+        request_timeout_seconds=env_int("NICKEL_REQUEST_TIMEOUT_SECONDS", 30),
+        user_agent=os.getenv("NICKEL_USER_AGENT", DEFAULT_USER_AGENT),
+        state_file=os.getenv("NICKEL_STATE_FILE") or ".nickel_price_mailer.state",
+        send_only_on_change=env_bool("NICKEL_SEND_ONLY_ON_CHANGE", False),
+        mail=mail,
+    )
+
+
+def fetch_page(url: str, timeout_seconds: int, user_agent: str) -> str:
+    request = Request(
+        url,
+        headers={
+            "User-Agent": user_agent,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            return response.read().decode(charset, errors="replace")
+    except (HTTPError, URLError, TimeoutError) as exc:
+        raise FetchError(f"Unable to fetch {url}: {exc}") from exc
+
+
+def extract_title(page_html: str) -> str | None:
+    match = re.search(r"<title[^>]*>(.*?)</title>", page_html, flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None
+    return normalize_space(html.unescape(re.sub(r"<[^>]+>", " ", match.group(1))))
+
+
+def extract_text_parts(page_html: str) -> tuple[str, ...]:
+    parser = TextExtractor()
+    parser.feed(page_html)
+    return tuple(part for part in parser.parts if part)
+
+
+def is_price_token(token: str) -> bool:
+    cleaned = token.strip().strip(",:;()[]")
+    if not PRICE_TOKEN_RE.match(cleaned):
+        return False
+    if cleaned.endswith("%"):
+        return False
+    numeric = cleaned.replace(",", "").lstrip("+-")
+    if numeric.isdigit() and 1900 <= int(numeric) <= 2100:
+        return False
+    return True
+
+
+def first_matching(pattern: re.Pattern[str], values: Iterable[str]) -> str | None:
+    for value in values:
+        match = pattern.search(value)
+        if match:
+            return normalize_space(match.group(0))
+    return None
+
+
+def find_price_value(values: Iterable[str]) -> str | None:
+    for value in values:
+        for token in re.split(r"\s+", value):
+            cleaned = token.strip().strip(",:;()[]")
+            if is_price_token(cleaned):
+                return cleaned
+    return None
+
+
+def find_change(values: Iterable[str]) -> str | None:
+    for value in values:
+        for token in re.split(r"\s+", value):
+            cleaned = token.strip().strip(",:;()[]")
+            if cleaned.startswith(("+", "-")) and PRICE_TOKEN_RE.match(cleaned):
+                return cleaned
+    return None
+
+
+def collapse_label(parts: Iterable[str]) -> str:
+    label = " ".join(normalize_space(part) for part in parts if normalize_space(part))
+    label = re.sub(r"\s+Price Description\b", "", label, flags=re.IGNORECASE)
+    return label[:140].strip(" -|")
+
+
+def extract_price_rows(parts: tuple[str, ...]) -> tuple[PriceRow, ...]:
+    rows: list[PriceRow] = []
+    seen: set[str] = set()
+
+    for index, part in enumerate(parts):
+        lowered = part.lower()
+        if "nickel" not in lowered or "http" in lowered:
+            continue
+        if lowered in {"nickel prices", "nickel price", "nickel price chart"}:
+            continue
+        if len(part) > 180:
+            continue
+
+        window = parts[index : index + 12]
+        value = find_price_value(window[1:]) or find_price_value([part])
+        unit = first_matching(UNIT_RE, window)
+        change = find_change(window[1:])
+        date = first_matching(DATE_TOKEN_RE, window)
+
+        if not value and not unit and not date:
+            continue
+
+        label_parts = [part]
+        if len(part) < 45 and index + 1 < len(parts) and not is_price_token(parts[index + 1]):
+            next_part = parts[index + 1]
+            if "nickel" in next_part.lower() and len(next_part) < 100:
+                label_parts.append(next_part)
+        label = collapse_label(label_parts)
+        key = label.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(PriceRow(label=label, value=value, unit=unit, change=change, date=date))
+        if len(rows) >= 12:
+            break
+
+    return tuple(rows)
+
+
+def make_raw_excerpt(parts: tuple[str, ...]) -> str:
+    nickel_parts = [part for part in parts if "nickel" in part.lower()]
+    selected = nickel_parts[:8] if nickel_parts else parts[:12]
+    return "\n".join(selected)[:2_000]
+
+
+def parse_snapshot(source_url: str, page_html: str) -> PriceSnapshot:
+    parts = extract_text_parts(page_html)
+    return PriceSnapshot(
+        source_url=source_url,
+        fetched_at_utc=dt.datetime.now(dt.timezone.utc),
+        title=extract_title(page_html),
+        rows=extract_price_rows(parts),
+        raw_excerpt=make_raw_excerpt(parts),
+    )
+
+
+def fetch_snapshots(config: AppConfig) -> tuple[PriceSnapshot, ...]:
+    snapshots: list[PriceSnapshot] = []
+    errors: list[str] = []
+    for url in config.urls:
+        try:
+            page_html = fetch_page(url, config.request_timeout_seconds, config.user_agent)
+            snapshots.append(parse_snapshot(url, page_html))
+        except FetchError as exc:
+            errors.append(str(exc))
+    if not snapshots:
+        raise FetchError("; ".join(errors) if errors else "No price sources configured")
+    return tuple(snapshots)
+
+
+def build_email_body(snapshots: Iterable[PriceSnapshot]) -> str:
+    lines = [
+        "Nickel price update from metal.com",
+        "",
+        f"Generated at: {dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')}",
+        "",
+    ]
+    for snapshot in snapshots:
+        lines.extend(
+            [
+                f"Source: {snapshot.source_url}",
+                f"Fetched at: {snapshot.fetched_at_utc.strftime('%Y-%m-%d %H:%M:%S %Z')}",
+            ]
+        )
+        if snapshot.title:
+            lines.append(f"Page title: {snapshot.title}")
+        if snapshot.rows:
+            lines.append("Extracted price rows:")
+            lines.extend(f"- {row.as_text()}" for row in snapshot.rows)
+        else:
+            lines.extend(
+                [
+                    "No structured price rows were extracted. Page excerpt:",
+                    snapshot.raw_excerpt or "(empty page text)",
+                ]
+            )
+        lines.append("")
+
+    lines.append("This email was generated automatically by nickel_price_mailer.py.")
+    return "\n".join(lines)
+
+
+def build_subject(snapshots: Iterable[PriceSnapshot]) -> str:
+    for snapshot in snapshots:
+        for row in snapshot.rows:
+            if row.value:
+                label = row.label[:60]
+                return f"Nickel price update: {label} {row.value}"
+    today = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    return f"Nickel price update - {today}"
+
+
+def send_email(mail: MailConfig, subject: str, body: str) -> None:
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = mail.sender
+    message["To"] = ", ".join(mail.recipients)
+    message.set_content(body)
+
+    if mail.use_ssl:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(mail.smtp_host, mail.smtp_port, context=context) as server:
+            login_if_configured(server, mail)
+            server.send_message(message)
+        return
+
+    with smtplib.SMTP(mail.smtp_host, mail.smtp_port) as server:
+        if mail.use_starttls:
+            server.starttls(context=ssl.create_default_context())
+        login_if_configured(server, mail)
+        server.send_message(message)
+
+
+def login_if_configured(server: smtplib.SMTP, mail: MailConfig) -> None:
+    if mail.smtp_username and mail.smtp_password:
+        server.login(mail.smtp_username, mail.smtp_password)
+
+
+def combined_digest(snapshots: Iterable[PriceSnapshot]) -> str:
+    digest = hashlib.sha256()
+    for snapshot in snapshots:
+        digest.update(snapshot.source_url.encode("utf-8"))
+        digest.update(snapshot.digest().encode("utf-8"))
+    return digest.hexdigest()
+
+
+def read_previous_digest(state_file: str | None) -> str | None:
+    if not state_file:
+        return None
+    try:
+        with open(state_file, "r", encoding="utf-8") as handle:
+            return handle.read().strip() or None
+    except FileNotFoundError:
+        return None
+
+
+def write_digest(state_file: str | None, digest: str) -> None:
+    if not state_file:
+        return
+    with open(state_file, "w", encoding="utf-8") as handle:
+        handle.write(digest + "\n")
+
+
+def run_once(config: AppConfig) -> bool:
+    """Fetch prices and send one email. Returns True when an email is sent."""
+
+    snapshots = fetch_snapshots(config)
+    digest = combined_digest(snapshots)
+    if config.send_only_on_change and digest == read_previous_digest(config.state_file):
+        print("No nickel price change detected; email not sent.", flush=True)
+        return False
+
+    send_email(config.mail, build_subject(snapshots), build_email_body(snapshots))
+    write_digest(config.state_file, digest)
+    print("Nickel price email sent.", flush=True)
+    return True
+
+
+def run_forever(config: AppConfig) -> None:
+    while True:
+        try:
+            run_once(config)
+        except Exception as exc:  # noqa: BLE001 - keep unattended scheduler alive.
+            print(f"Nickel price update failed: {exc}", file=sys.stderr, flush=True)
+        time.sleep(config.interval_minutes * 60)
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Email recurring nickel price updates from metal.com.")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="send one update and exit; useful for cron or manual testing",
+    )
+    parser.add_argument(
+        "--print-config",
+        action="store_true",
+        help="validate environment variables and print non-secret configuration",
+    )
+    return parser
+
+
+def print_config(config: AppConfig) -> None:
+    print("Nickel price mailer configuration:")
+    print(f"  URLs: {', '.join(config.urls)}")
+    print(f"  Interval minutes: {config.interval_minutes}")
+    print(f"  Request timeout seconds: {config.request_timeout_seconds}")
+    print(f"  Send only on change: {config.send_only_on_change}")
+    print(f"  State file: {config.state_file}")
+    print(f"  SMTP host: {config.mail.smtp_host}:{config.mail.smtp_port}")
+    print(f"  SMTP SSL: {config.mail.use_ssl}")
+    print(f"  SMTP STARTTLS: {config.mail.use_starttls}")
+    print(f"  SMTP username configured: {bool(config.mail.smtp_username)}")
+    print(f"  Sender: {config.mail.sender}")
+    print(f"  Recipients: {', '.join(config.mail.recipients)}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    try:
+        config = load_config()
+        if args.print_config:
+            print_config(config)
+            return 0
+        if args.once or env_bool("NICKEL_RUN_ONCE", False):
+            run_once(config)
+            return 0
+        run_forever(config)
+        return 0
+    except ConfigError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 2
+    except FetchError as exc:
+        print(f"Fetch error: {exc}", file=sys.stderr)
+        return 3
+    except smtplib.SMTPException as exc:
+        print(f"Email error: {exc}", file=sys.stderr)
+        return 4
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
