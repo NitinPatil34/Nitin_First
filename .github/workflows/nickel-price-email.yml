@@ -1,6 +1,9 @@
 name: Nickel price update
 
 on:
+  push:
+    branches:
+      - cursor/nickel-price-email-updates-5340
   schedule:
     # GitHub schedules are most reliable at 5-minute granularity.
     # The job loops five times so rows are appended about once per minute.
