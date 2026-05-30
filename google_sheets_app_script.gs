@@ -22,8 +22,8 @@ function doPost(e) {
     return jsonResponse({ ok: false, error: 'No rows supplied' });
   }
 
-  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = spreadsheet.getSheetByName(SHEET_NAME) || spreadsheet.insertSheet(SHEET_NAME);
+  const spreadsheet = getTargetSpreadsheet();
+  const sheet = getTargetSheet(spreadsheet);
   ensureHeaderRow(sheet);
 
   const values = rows.map((row) => [
@@ -37,7 +37,39 @@ function doPost(e) {
   ]);
   sheet.getRange(sheet.getLastRow() + 1, 1, values.length, HEADERS.length).setValues(values);
 
-  return jsonResponse({ ok: true, rowsAppended: values.length });
+  return jsonResponse({
+    ok: true,
+    rowsAppended: values.length,
+    spreadsheetId: spreadsheet.getId(),
+    sheetName: sheet.getName(),
+  });
+}
+
+function getTargetSpreadsheet() {
+  const spreadsheetId = PropertiesService.getScriptProperties().getProperty('NICKEL_SPREADSHEET_ID');
+  if (spreadsheetId) {
+    return SpreadsheetApp.openById(spreadsheetId);
+  }
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function getTargetSheet(spreadsheet) {
+  const namedSheet = spreadsheet.getSheetByName(SHEET_NAME);
+  if (namedSheet) {
+    return namedSheet;
+  }
+
+  const firstSheet = spreadsheet.getSheets()[0];
+  if (isSheetEmpty(firstSheet)) {
+    firstSheet.setName(SHEET_NAME);
+    return firstSheet;
+  }
+
+  return spreadsheet.insertSheet(SHEET_NAME);
+}
+
+function isSheetEmpty(sheet) {
+  return sheet.getLastRow() === 0 && sheet.getLastColumn() === 0;
 }
 
 function ensureHeaderRow(sheet) {

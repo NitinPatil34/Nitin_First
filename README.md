@@ -52,12 +52,13 @@ Configure at least one destination: Google Sheets or email.
 1. Create/open the Google Sheet where you want nickel prices stored.
 2. Open **Extensions** -> **Apps Script**.
 3. Paste the contents of `google_sheets_app_script.gs`.
-4. Optional but recommended: add a Script Property named
+4. Save the script. If you changed an existing deployment, click **Deploy** -> **Manage deployments** -> **Edit** and select **New version** before deploying again.
+5. Optional but recommended: add a Script Property named
    `NICKEL_SHEETS_SHARED_SECRET` with any random value.
-5. Deploy as a **Web app** with access set to **Anyone with the link**.
-6. Save the web app URL as the GitHub Actions repository secret
+6. Deploy as a **Web app** with access set to **Anyone with the link**.
+7. Save the web app URL as the GitHub Actions repository secret
    `NICKEL_SHEETS_WEBHOOK_URL`.
-7. If you used a shared secret, save the same value as
+8. If you used a shared secret, save the same value as
    `NICKEL_SHEETS_SHARED_SECRET`.
 
 ## Run once

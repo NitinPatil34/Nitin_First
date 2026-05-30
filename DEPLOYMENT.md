@@ -9,19 +9,20 @@ deployment writes nickel prices to Google Sheets and does not require email.
 1. Create/open the Google Sheet where nickel prices should be stored.
 2. Open **Extensions** -> **Apps Script**.
 3. Paste the contents of `google_sheets_app_script.gs`.
-4. Optional but recommended: in Apps Script, open **Project Settings** ->
+4. Save the script. If you changed an existing deployment, click **Deploy** -> **Manage deployments** -> **Edit** and select **New version** before deploying again.
+5. Optional but recommended: in Apps Script, open **Project Settings** ->
    **Script properties** and add:
 
    ```text
    NICKEL_SHEETS_SHARED_SECRET=<any random value you choose>
    ```
 
-5. Click **Deploy** -> **New deployment**.
-6. Choose type **Web app**.
-7. Set **Execute as** to yourself.
-8. Set **Who has access** to **Anyone with the link**. The optional shared
+6. Click **Deploy** -> **New deployment**.
+7. Choose type **Web app**.
+8. Set **Execute as** to yourself.
+9. Set **Who has access** to **Anyone with the link**. The optional shared
    secret prevents unauthorized writes.
-9. Deploy and copy the web app URL.
+10. Deploy and copy the web app URL.
 
 ## GitHub Actions setup
 
